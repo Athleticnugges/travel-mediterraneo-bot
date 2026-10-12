@@ -18,7 +18,6 @@ SEARCH_TERMS = [
 ]
 
 def get_unsplash_photo():
-    # Try up to 3 times with different random terms if one fails
     for _ in range(3):
         query = random.choice(SEARCH_TERMS)
         url = f"https://api.unsplash.com/photos/random?query={query}&orientation=squarish&client_id={UNSPLASH_KEY}"
@@ -30,7 +29,6 @@ def get_unsplash_photo():
             location = res.get('location', {}).get('name') or query
             return image_url, photographer, location
 
-    # Ultimate fallback if specific terms fail
     fallback_url = f"https://api.unsplash.com/photos/random?query=Mediterranean&orientation=squarish&client_id={UNSPLASH_KEY}"
     res = requests.get(fallback_url).json()
     return res['urls']['regular'], res['user']['username'], "Mediterranean Sea"
