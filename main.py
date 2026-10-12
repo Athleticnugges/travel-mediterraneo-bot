@@ -19,30 +19,35 @@ SEARCH_TERMS = [
 
 def get_unsplash_photo():
     for _ in range(3):
-        query = random.choice(SEARCH_TERMS)
-        url = f"https://api.unsplash.com/photos/random?query={query}&orientation=squarish&client_id={UNSPLASH_KEY}"
+        base_location = random.choice(SEARCH_TERMS)
+        # Combine location with our vibe keywords and format for the URL
+        search_query = f"{base_location} summer sunny vibrant".replace(' ', '+')
+        
+        url = f"https://api.unsplash.com/photos/random?query={search_query}&orientation=squarish&client_id={UNSPLASH_KEY}"
         res = requests.get(url).json()
         
         if 'errors' not in res and 'urls' in res:
             image_url = res['urls']['regular']
-            location = res.get('location', {}).get('name') or query
+            # Provide the clean base_location to the AI so it doesn't get confused by the extra keywords
+            location = res.get('location', {}).get('name') or base_location
             return image_url, location
 
-    fallback_url = f"https://api.unsplash.com/photos/random?query=Mediterranean&orientation=squarish&client_id={UNSPLASH_KEY}"
+    # Ultimate fallback with the same sunny constraints
+    fallback_url = f"https://api.unsplash.com/photos/random?query=Mediterranean+summer+sunny+vibrant&orientation=squarish&client_id={UNSPLASH_KEY}"
     res = requests.get(fallback_url).json()
     return res['urls']['regular'], "Mediterranean Sea"
 
 def generate_caption(location):
     client = genai.Client(api_key=GEMINI_KEY)
     prompt = f"""
-    Write a 3 to 4 sentence Instagram caption for a beautiful photo of {location}.
-    Do NOT write in the first person (no "I", "we", "my") and do NOT pretend you visited this place or took the photo.
-    Structure the caption to include:
-    1. An appreciative description of the scenery or atmosphere in the picture.
-    2. A mention of the city or region, and you MUST include the flag emoji of the country it belongs to.
-    3. One beautiful, interesting fact about the history, culture, or nature of this specific city.
-    Do NOT use robotic AI buzzwords like 'discover', 'unveil', 'nestled', or 'embark'. 
-    Include exactly 4 relevant hashtags at the end.
+    Write an engaging Instagram caption for the Mediterranean location: {location}.
+
+    CRITICAL INSTRUCTIONS:
+    - DO NOT describe the visual appearance of the location. You must avoid mentioning the time of day, lighting, weather, colors, flora, or specific scenery (e.g., do not mention bright sun, blue water, or specific flowers).
+    - Focus entirely on the history, local mythology, cultural significance, or the broader essence of the destination. Be sure to include the flag emoji of the country it belongs to.
+    - Write in a captivating, sophisticated tone suitable for a travel page.
+    - Keep the caption between 3 to 4 sentences.
+    - End with 4-5 relevant hashtags.
     """
     response = client.models.generate_content(
         model='gemini-3.8-flash',
