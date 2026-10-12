@@ -9,31 +9,31 @@ ACCOUNT_ID = os.environ["INSTAGRAM_ACCOUNT_ID"]
 GEMINI_KEY = os.environ["GEMINI_API_KEY"]
 UNSPLASH_KEY = os.environ["UNSPLASH_ACCESS_KEY"]
 
-# A wide variety of search terms to pull diverse Mediterranean photos
 SEARCH_TERMS = [
     "Mediterranean coast", "Amalfi coast", "Bodrum Turkey", "Santorini Greece",
     "French Riviera", "Cinque Terre", "Mallorca coast", "Corsica",
     "Sardinia beach", "Dalmatian coast Croatia", "Cyprus beach", "Ibiza coast",
     "Positano", "Monaco coast", "Malta coast", "Antalya coast", "Fethiye", 
-    "Mykonos", "Capri Italy", "Costa Brava", "Bodrum Harbour", "Milta Bodrum Marina"
+    "Mykonos", "Capri Italy", "Costa Brava", "Bodrum Harbour"
 ]
 
 def get_unsplash_photo():
-    query = random.choice(SEARCH_TERMS)
-    url = f"https://api.unsplash.com/photos/random?query={query}&orientation=squarish&client_id={UNSPLASH_KEY}"
-    res = requests.get(url).json()
-    
-    if 'errors' in res:
-        raise Exception(f"Unsplash API error: {res['errors']}")
+    # Try up to 3 times with different random terms if one fails
+    for _ in range(3):
+        query = random.choice(SEARCH_TERMS)
+        url = f"https://api.unsplash.com/photos/random?query={query}&orientation=squarish&client_id={UNSPLASH_KEY}"
+        res = requests.get(url).json()
         
-    image_url = res['urls']['regular']
-    photographer = res['user']['username']
-    
-    location = res.get('location', {}).get('name')
-    if not location:
-        location = query
-        
-    return image_url, photographer, location
+        if 'errors' not in res and 'urls' in res:
+            image_url = res['urls']['regular']
+            photographer = res['user']['username']
+            location = res.get('location', {}).get('name') or query
+            return image_url, photographer, location
+
+    # Ultimate fallback if specific terms fail
+    fallback_url = f"https://api.unsplash.com/photos/random?query=Mediterranean&orientation=squarish&client_id={UNSPLASH_KEY}"
+    res = requests.get(fallback_url).json()
+    return res['urls']['regular'], res['user']['username'], "Mediterranean Sea"
 
 def generate_caption(location, photographer):
     client = genai.Client(api_key=GEMINI_KEY)
