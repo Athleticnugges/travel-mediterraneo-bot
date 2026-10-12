@@ -2,7 +2,7 @@ name: Scheduled Instagram Post
 
 on:
   schedule:
-    - cron: '0 */4 * * *'
+    - cron: '0 8,20 * * *'
   workflow_dispatch:
 
 jobs:
@@ -25,12 +25,5 @@ jobs:
           INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
           INSTAGRAM_ACCOUNT_ID: ${{ secrets.INSTAGRAM_ACCOUNT_ID }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          UNSPLASH_ACCESS_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
         run: python main.py
-
-      - name: Commit updated queue state
-        run: |
-          git config --global user.name 'github-actions[bot]'
-          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          git add locations.json
-          git commit -m "Update post queue status [skip ci]" || exit 0
-          git push

@@ -1,28 +1,55 @@
 import os
-import json
 import time
+import random
 import requests
 from google import genai
 
 ACCESS_TOKEN = os.environ["INSTAGRAM_ACCESS_TOKEN"]
 ACCOUNT_ID = os.environ["INSTAGRAM_ACCOUNT_ID"]
-GEMINI_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_KEY = os.environ["GEMINI_API_KEY"]
+UNSPLASH_KEY = os.environ["UNSPLASH_ACCESS_KEY"]
 
-def generate_caption(location, credit):
-    if not GEMINI_KEY:
-        return f"📍 {location}\n\nPhoto by: {credit}\n\n#travelmediterraneo #mediterraneansea"
+# A wide variety of search terms to pull diverse Mediterranean photos
+SEARCH_TERMS = [
+    "Mediterranean coast", "Amalfi coast", "Bodrum Turkey", "Santorini Greece",
+    "French Riviera", "Cinque Terre", "Mallorca coast", "Corsica",
+    "Sardinia beach", "Dalmatian coast Croatia", "Cyprus beach", "Ibiza coast",
+    "Positano", "Monaco coast", "Malta coast", "Antalya coast", "Fethiye", 
+    "Mykonos", "Capri Italy", "Costa Brava", "Bodrum Harbour", "Milta Bodrum Marina"
+]
+
+def get_unsplash_photo():
+    query = random.choice(SEARCH_TERMS)
+    url = f"https://api.unsplash.com/photos/random?query={query}&orientation=squarish&client_id={UNSPLASH_KEY}"
+    res = requests.get(url).json()
     
+    if 'errors' in res:
+        raise Exception(f"Unsplash API error: {res['errors']}")
+        
+    image_url = res['urls']['regular']
+    photographer = res['user']['username']
+    
+    location = res.get('location', {}).get('name')
+    if not location:
+        location = query
+        
+    return image_url, photographer, location
+
+def generate_caption(location, photographer):
     client = genai.Client(api_key=GEMINI_KEY)
     prompt = f"""
-    Write a detailed, high-engagement Instagram caption for: {location}.
-    Include geography details, cultural history, 3 must-visit spots, local dish recommendation, 
-    photo credit to {credit}, and 15 relevant hashtags (#travelmediterraneo #mediterraneansea #coastalvibes).
+    Write a short, casual Instagram caption for a beautiful photo of {location}.
+    Write exactly 3 to 4 sentences describing the scenery, the water, or the atmosphere. 
+    Make it sound completely natural and human, like a traveler sharing a personal memory. 
+    Do NOT use robotic AI buzzwords like 'discover', 'unveil', 'nestled', or 'embark'. 
+    End with: 📸 Photo by @{photographer} on Unsplash
+    Include exactly 4 relevant hashtags.
     """
     response = client.models.generate_content(
         model='gemini-2.5-flash',
         contents=prompt,
     )
-    return response.text
+    return response.text.strip()
 
 def post_to_instagram(image_url, caption):
     container_url = f"https://graph.facebook.com/v26.0/{ACCOUNT_ID}/media"
@@ -46,22 +73,15 @@ def post_to_instagram(image_url, caption):
     return requests.post(publish_url, data=publish_payload).json()
 
 def run():
-    with open('locations.json', 'r') as f:
-        locations = json.load(f)
-
-    for item in locations:
-        if not item.get('published', False):
-            print(f"Publishing: {item['location']}")
-            caption = generate_caption(item['location'], item['credit'])
-            post_to_instagram(item['image_url'], caption)
-            item['published'] = True
-            break
-    else:
-        print("No pending posts found in queue.")
-        return
-
-    with open('locations.json', 'w') as f:
-        json.dump(locations, f, indent=2)
+    print("Fetching random Mediterranean photo...")
+    image_url, photographer, location = get_unsplash_photo()
+    
+    print(f"Generating caption for {location}...")
+    caption = generate_caption(location, photographer)
+    
+    print("Publishing to Instagram...")
+    post_to_instagram(image_url, caption)
+    print("Successfully published! Hands-off mode complete.")
 
 if __name__ == "__main__":
     run()
