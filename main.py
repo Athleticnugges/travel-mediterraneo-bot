@@ -25,23 +25,24 @@ def get_unsplash_photo():
         
         if 'errors' not in res and 'urls' in res:
             image_url = res['urls']['regular']
-            photographer = res['user']['username']
             location = res.get('location', {}).get('name') or query
-            return image_url, photographer, location
+            return image_url, location
 
     fallback_url = f"https://api.unsplash.com/photos/random?query=Mediterranean&orientation=squarish&client_id={UNSPLASH_KEY}"
     res = requests.get(fallback_url).json()
-    return res['urls']['regular'], res['user']['username'], "Mediterranean Sea"
+    return res['urls']['regular'], "Mediterranean Sea"
 
-def generate_caption(location, photographer):
+def generate_caption(location):
     client = genai.Client(api_key=GEMINI_KEY)
     prompt = f"""
-    Write a short, casual Instagram caption for a beautiful photo of {location}.
-    Write exactly 3 to 4 sentences describing the scenery, the water, or the atmosphere. 
-    Make it sound completely natural and human, like a traveler sharing a personal memory. 
+    Write a 3 to 4 sentence Instagram caption for a beautiful photo of {location}.
+    Do NOT write in the first person (no "I", "we", "my") and do NOT pretend you visited this place or took the photo.
+    Structure the caption to include:
+    1. An appreciative description of the scenery or atmosphere in the picture.
+    2. A mention of the city or region, and you MUST include the flag emoji of the country it belongs to.
+    3. One beautiful, interesting fact about the history, culture, or nature of this specific city.
     Do NOT use robotic AI buzzwords like 'discover', 'unveil', 'nestled', or 'embark'. 
-    End with: 📸 Photo by @{photographer} on Unsplash
-    Include exactly 4 relevant hashtags.
+    Include exactly 4 relevant hashtags at the end.
     """
     response = client.models.generate_content(
         model='gemini-3.8-flash',
@@ -72,10 +73,10 @@ def post_to_instagram(image_url, caption):
 
 def run():
     print("Fetching random Mediterranean photo...")
-    image_url, photographer, location = get_unsplash_photo()
+    image_url, location = get_unsplash_photo()
     
     print(f"Generating caption for {location}...")
-    caption = generate_caption(location, photographer)
+    caption = generate_caption(location)
     
     print("Publishing to Instagram...")
     post_to_instagram(image_url, caption)
