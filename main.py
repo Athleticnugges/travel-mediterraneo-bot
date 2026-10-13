@@ -19,20 +19,20 @@ SEARCH_TERMS = [
 
 def get_unsplash_photo():
     for _ in range(3):
-        base_location = random.choice(SEARCH_TERMS)
-        search_query = f"{base_location} bright sunny daylight".replace(' ', '+')
+        # We now lock onto this base_location to ensure the photo, caption, and geotag match perfectly
+        location = random.choice(SEARCH_TERMS)
+        search_query = f"{location} bright sunny daylight".replace(' ', '+')
         
         url = f"https://api.unsplash.com/photos/random?query={search_query}&orientation=squarish&client_id={UNSPLASH_KEY}"
         res = requests.get(url).json()
         
         if 'errors' not in res and 'urls' in res:
             image_url = res['urls']['regular']
-            location = res.get('location', {}).get('name') or base_location
-            return image_url, location, base_location
+            return image_url, location
 
     fallback_url = f"https://api.unsplash.com/photos/random?query=Mediterranean+bright+sunny+daylight&orientation=squarish&client_id={UNSPLASH_KEY}"
     res = requests.get(fallback_url).json()
-    return res['urls']['regular'], "Mediterranean Sea", "Mediterranean Sea"
+    return res['urls']['regular'], "Mediterranean Sea"
 
 def generate_caption(location):
     client = genai.Client(api_key=GEMINI_KEY)
@@ -40,11 +40,12 @@ def generate_caption(location):
     Write a casual Instagram caption for the Mediterranean location: {location}.
 
     CRITICAL INSTRUCTIONS:
+    - STRICTLY THIRD PERSON: NEVER use first-person pronouns like "I", "me", "my", or "we".
     - MAXIMUM 2 SENTENCES. You must write exactly 1 or 2 sentences.
     - NO HYPHENS. You are strictly forbidden from using the "-" character anywhere.
     - NO HASHTAGS. Do not generate hashtags.
     - DO NOT describe the visual appearance of the photo (no lighting, weather, or colors).
-    - Share a brief piece of history or local mythology about the destination. Make it sound highly natural and human, like a friend casually sharing a cool fact they just learned.
+    - Share a brief piece of history or local mythology about the destination. Make it sound conversational, but stick to objective facts.
     - Include the flag emoji of the country it belongs to.
     - If you write a second sentence, make it a natural, conversational question for the audience.
     - DO NOT use robotic AI words (e.g., discover, unveil, nestled, embark, dive into, imagine, a testament to).
@@ -57,7 +58,6 @@ def generate_caption(location):
                 contents=prompt,
             )
             
-            # Ironclad Python-level scrub: physically forces the removal of hyphens, hashtags, and markdown
             clean_caption = response.text.strip()
             clean_caption = clean_caption.replace("-", " ")
             clean_caption = clean_caption.replace("#", "")
@@ -77,19 +77,21 @@ def get_facebook_location_id(location_query):
     search_url = "https://graph.facebook.com/v26.0/pages/search"
     params = {
         'q': location_query,
-        'fields': 'id,name',
+        'fields': 'id,name,location',
         'access_token': ACCESS_TOKEN
     }
     try:
         res = requests.get(search_url, params=params).json()
-        if 'data' in res and len(res['data']) > 0:
-            return res['data'][0]['id']
+        # Instagram rejects the geotag if the Facebook page doesn't have a physical 'location' object attached to it
+        for page in res.get('data', []):
+            if 'location' in page:
+                return page['id']
     except Exception as e:
         print(f"Location search warning: {e}")
     return None
 
-def post_to_instagram(image_url, caption, base_location):
-    location_id = get_facebook_location_id(base_location)
+def post_to_instagram(image_url, caption, location):
+    location_id = get_facebook_location_id(location)
     
     container_url = f"https://graph.facebook.com/v26.0/{ACCOUNT_ID}/media"
     payload = {
@@ -100,7 +102,7 @@ def post_to_instagram(image_url, caption, base_location):
     
     if location_id:
         payload['location_id'] = location_id
-        print(f"Attaching geotag ID: {location_id}")
+        print(f"Attaching verified geotag ID: {location_id}")
 
     res = requests.post(container_url, data=payload).json()
     creation_id = res.get('id')
@@ -118,13 +120,13 @@ def post_to_instagram(image_url, caption, base_location):
 
 def run():
     print("Fetching random Mediterranean photo...")
-    image_url, location, base_location = get_unsplash_photo()
+    image_url, location = get_unsplash_photo()
     
     print(f"Generating caption for {location}...")
     caption = generate_caption(location)
     
     print("Publishing to Instagram...")
-    post_to_instagram(image_url, caption, base_location)
+    post_to_instagram(image_url, caption, location)
     print("Successfully published! Hands-off mode complete.")
 
 if __name__ == "__main__":
