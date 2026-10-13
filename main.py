@@ -20,7 +20,6 @@ SEARCH_TERMS = [
 def get_unsplash_photo():
     for _ in range(3):
         base_location = random.choice(SEARCH_TERMS)
-        # Forcing bright daytime shots to eliminate dark/twilight images
         search_query = f"{base_location} bright sunny daylight".replace(' ', '+')
         
         url = f"https://api.unsplash.com/photos/random?query={search_query}&orientation=squarish&client_id={UNSPLASH_KEY}"
@@ -31,7 +30,6 @@ def get_unsplash_photo():
             location = res.get('location', {}).get('name') or base_location
             return image_url, location
 
-    # Ultimate fallback with the same strict sunny constraints
     fallback_url = f"https://api.unsplash.com/photos/random?query=Mediterranean+bright+sunny+daylight&orientation=squarish&client_id={UNSPLASH_KEY}"
     res = requests.get(fallback_url).json()
     return res['urls']['regular'], "Mediterranean Sea"
@@ -39,21 +37,26 @@ def get_unsplash_photo():
 def generate_caption(location):
     client = genai.Client(api_key=GEMINI_KEY)
     prompt = f"""
-    Write an engaging Instagram caption for the Mediterranean location: {location}.
+    Write a casual Instagram caption for the Mediterranean location: {location}.
 
     CRITICAL INSTRUCTIONS:
-    - MAXIMUM 3 SENTENCES. Write exactly 2 or 3 sentences. Under no circumstances should you write more than 3 sentences.
-    - NO HASHTAGS. Do not use any hashtags at all.
-    - DO NOT describe the visual appearance of the location (no mentioning the time of day, lighting, weather, or colors).
-    - Focus entirely on a captivating fact about the history, local mythology, or cultural significance of the destination.
+    - MAXIMUM 2 SENTENCES. You must write exactly 1 or 2 sentences.
+    - NO HYPHENS. You are strictly forbidden from using the "-" character anywhere.
+    - NO HASHTAGS.
+    - DO NOT describe the visual appearance of the photo (no lighting, weather, or colors).
+    - Share a brief piece of history or local mythology about the destination. Make it sound highly natural and human, like a friend casually sharing a cool fact they just learned.
     - Include the flag emoji of the country it belongs to.
-    - To gain followers and drive algorithmic engagement, make your final sentence a short, engaging question for the audience to answer in the comments.
+    - If you write a second sentence, make it a natural, conversational question for the audience.
+    - DO NOT use robotic AI words (e.g., discover, unveil, nestled, embark, dive into, imagine, a testament to).
     """
     response = client.models.generate_content(
         model='gemini-3.8-flash',
         contents=prompt,
     )
-    return response.text.strip()
+    
+    # Strip out any hyphens or dashes as a hard safeguard, and fix any double spaces it creates
+    clean_caption = response.text.strip().replace("-", " ").replace("  ", " ")
+    return clean_caption
 
 def post_to_instagram(image_url, caption):
     container_url = f"https://graph.facebook.com/v26.0/{ACCOUNT_ID}/media"
