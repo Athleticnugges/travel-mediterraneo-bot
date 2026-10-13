@@ -19,36 +19,41 @@ SEARCH_TERMS = [
 
 def get_unsplash_photo():
     for _ in range(3):
-        # We now lock onto this base_location to ensure the photo, caption, and geotag match perfectly
         location = random.choice(SEARCH_TERMS)
-        search_query = f"{location} bright sunny daylight".replace(' ', '+')
+        search_query = f"{location} vibrant sunny clear blue sky landscape empty scenery".replace(' ', '+')
         
-        url = f"https://api.unsplash.com/photos/random?query={search_query}&orientation=squarish&client_id={UNSPLASH_KEY}"
+        # Switch to /search/photos to isolate the top 30 highest-ranked images
+        url = f"https://api.unsplash.com/search/photos?query={search_query}&orientation=squarish&per_page=30&client_id={UNSPLASH_KEY}"
         res = requests.get(url).json()
         
-        if 'errors' not in res and 'urls' in res:
-            image_url = res['urls']['regular']
+        if 'results' in res and len(res['results']) > 0:
+            # Pick a random photo from the premium pool of top results
+            chosen_photo = random.choice(res['results'])
+            image_url = chosen_photo['urls']['regular']
             return image_url, location
 
-    fallback_url = f"https://api.unsplash.com/photos/random?query=Mediterranean+bright+sunny+daylight&orientation=squarish&client_id={UNSPLASH_KEY}"
+    # Fallback to the same highly-ranked search logic
+    fallback_url = f"https://api.unsplash.com/search/photos?query=Mediterranean+vibrant+sunny+clear+sky+landscape+empty&orientation=squarish&per_page=30&client_id={UNSPLASH_KEY}"
     res = requests.get(fallback_url).json()
-    return res['urls']['regular'], "Mediterranean Sea"
+    chosen_photo = random.choice(res['results'])
+    return chosen_photo['urls']['regular'], "Mediterranean Sea"
 
 def generate_caption(location):
     client = genai.Client(api_key=GEMINI_KEY)
     prompt = f"""
-    Write a casual Instagram caption for the Mediterranean location: {location}.
+    Generate a minimalist Instagram caption for the Mediterranean location: {location}.
 
     CRITICAL INSTRUCTIONS:
-    - STRICTLY THIRD PERSON: NEVER use first-person pronouns like "I", "me", "my", or "we".
-    - MAXIMUM 2 SENTENCES. You must write exactly 1 or 2 sentences.
-    - NO HYPHENS. You are strictly forbidden from using the "-" character anywhere.
-    - NO HASHTAGS. Do not generate hashtags.
-    - DO NOT describe the visual appearance of the photo (no lighting, weather, or colors).
-    - Share a brief piece of history or local mythology about the destination. Make it sound conversational, but stick to objective facts.
-    - Include the flag emoji of the country it belongs to.
-    - If you write a second sentence, make it a natural, conversational question for the audience.
-    - DO NOT use robotic AI words (e.g., discover, unveil, nestled, embark, dive into, imagine, a testament to).
+    Output EXACTLY this format and nothing else. Do not write any sentences or descriptions.
+
+    [Specific Island/City Name], [Country] ☀️ [Country Flag Emoji]
+    [Blank Line]
+    #[hashtag1] #[hashtag2] #[hashtag3]
+
+    Example Output:
+    Syros island, Greece ☀️ 🇬🇷
+
+    #syros #syrosisland #greece
     """
     
     for attempt in range(3):
@@ -57,14 +62,7 @@ def generate_caption(location):
                 model='gemini-3.8-flash',
                 contents=prompt,
             )
-            
-            clean_caption = response.text.strip()
-            clean_caption = clean_caption.replace("-", " ")
-            clean_caption = clean_caption.replace("#", "")
-            clean_caption = clean_caption.replace("*", "")
-            clean_caption = clean_caption.replace("  ", " ")
-            
-            return clean_caption
+            return response.text.strip()
         except Exception as e:
             print(f"Gemini API error (attempt {attempt + 1}/3): {e}")
             if attempt < 2:
@@ -82,7 +80,6 @@ def get_facebook_location_id(location_query):
     }
     try:
         res = requests.get(search_url, params=params).json()
-        # Instagram rejects the geotag if the Facebook page doesn't have a physical 'location' object attached to it
         for page in res.get('data', []):
             if 'location' in page:
                 return page['id']
@@ -119,7 +116,7 @@ def post_to_instagram(image_url, caption, location):
     return requests.post(publish_url, data=publish_payload).json()
 
 def run():
-    print("Fetching random Mediterranean photo...")
+    print("Fetching top-rated Mediterranean photo...")
     image_url, location = get_unsplash_photo()
     
     print(f"Generating caption for {location}...")
