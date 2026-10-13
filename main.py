@@ -28,7 +28,6 @@ def get_unsplash_photo():
         if 'errors' not in res and 'urls' in res:
             image_url = res['urls']['regular']
             location = res.get('location', {}).get('name') or base_location
-            # We return the base_location specifically to use for the Facebook location search
             return image_url, location, base_location
 
     fallback_url = f"https://api.unsplash.com/photos/random?query=Mediterranean+bright+sunny+daylight&orientation=squarish&client_id={UNSPLASH_KEY}"
@@ -43,7 +42,7 @@ def generate_caption(location):
     CRITICAL INSTRUCTIONS:
     - MAXIMUM 2 SENTENCES. You must write exactly 1 or 2 sentences.
     - NO HYPHENS. You are strictly forbidden from using the "-" character anywhere.
-    - NO HASHTAGS.
+    - NO HASHTAGS. Do not generate hashtags.
     - DO NOT describe the visual appearance of the photo (no lighting, weather, or colors).
     - Share a brief piece of history or local mythology about the destination. Make it sound highly natural and human, like a friend casually sharing a cool fact they just learned.
     - Include the flag emoji of the country it belongs to.
@@ -51,14 +50,20 @@ def generate_caption(location):
     - DO NOT use robotic AI words (e.g., discover, unveil, nestled, embark, dive into, imagine, a testament to).
     """
     
-    # Retry logic: Try up to 3 times if the API is busy
     for attempt in range(3):
         try:
             response = client.models.generate_content(
                 model='gemini-3.8-flash',
                 contents=prompt,
             )
-            clean_caption = response.text.strip().replace("-", " ").replace("  ", " ")
+            
+            # Ironclad Python-level scrub: physically forces the removal of hyphens, hashtags, and markdown
+            clean_caption = response.text.strip()
+            clean_caption = clean_caption.replace("-", " ")
+            clean_caption = clean_caption.replace("#", "")
+            clean_caption = clean_caption.replace("*", "")
+            clean_caption = clean_caption.replace("  ", " ")
+            
             return clean_caption
         except Exception as e:
             print(f"Gemini API error (attempt {attempt + 1}/3): {e}")
