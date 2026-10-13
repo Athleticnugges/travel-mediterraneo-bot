@@ -49,14 +49,23 @@ def generate_caption(location):
     - If you write a second sentence, make it a natural, conversational question for the audience.
     - DO NOT use robotic AI words (e.g., discover, unveil, nestled, embark, dive into, imagine, a testament to).
     """
-    response = client.models.generate_content(
-        model='gemini-3.8-flash',
-        contents=prompt,
-    )
     
-    # Strip out any hyphens or dashes as a hard safeguard, and fix any double spaces it creates
-    clean_caption = response.text.strip().replace("-", " ").replace("  ", " ")
-    return clean_caption
+    # Retry logic: Try up to 3 times if the API is busy
+    for attempt in range(3):
+        try:
+            response = client.models.generate_content(
+                model='gemini-3.8-flash',
+                contents=prompt,
+            )
+            clean_caption = response.text.strip().replace("-", " ").replace("  ", " ")
+            return clean_caption
+        except Exception as e:
+            print(f"Gemini API error (attempt {attempt + 1}/3): {e}")
+            if attempt < 2:
+                print("Waiting 30 seconds before retrying...")
+                time.sleep(30)
+            else:
+                raise Exception("Gemini API failed after 3 attempts.") from e
 
 def post_to_instagram(image_url, caption):
     container_url = f"https://graph.facebook.com/v26.0/{ACCOUNT_ID}/media"
