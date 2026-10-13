@@ -20,20 +20,19 @@ SEARCH_TERMS = [
 def get_unsplash_photo():
     for _ in range(3):
         base_location = random.choice(SEARCH_TERMS)
-        # Combine location with our vibe keywords and format for the URL
-        search_query = f"{base_location} summer sunny vibrant".replace(' ', '+')
+        # Forcing bright daytime shots to eliminate dark/twilight images
+        search_query = f"{base_location} bright sunny daylight".replace(' ', '+')
         
         url = f"https://api.unsplash.com/photos/random?query={search_query}&orientation=squarish&client_id={UNSPLASH_KEY}"
         res = requests.get(url).json()
         
         if 'errors' not in res and 'urls' in res:
             image_url = res['urls']['regular']
-            # Provide the clean base_location to the AI so it doesn't get confused by the extra keywords
             location = res.get('location', {}).get('name') or base_location
             return image_url, location
 
-    # Ultimate fallback with the same sunny constraints
-    fallback_url = f"https://api.unsplash.com/photos/random?query=Mediterranean+summer+sunny+vibrant&orientation=squarish&client_id={UNSPLASH_KEY}"
+    # Ultimate fallback with the same strict sunny constraints
+    fallback_url = f"https://api.unsplash.com/photos/random?query=Mediterranean+bright+sunny+daylight&orientation=squarish&client_id={UNSPLASH_KEY}"
     res = requests.get(fallback_url).json()
     return res['urls']['regular'], "Mediterranean Sea"
 
@@ -43,11 +42,12 @@ def generate_caption(location):
     Write an engaging Instagram caption for the Mediterranean location: {location}.
 
     CRITICAL INSTRUCTIONS:
-    - DO NOT describe the visual appearance of the location. You must avoid mentioning the time of day, lighting, weather, colors, flora, or specific scenery (e.g., do not mention bright sun, blue water, or specific flowers).
-    - Focus entirely on the history, local mythology, cultural significance, or the broader essence of the destination. Be sure to include the flag emoji of the country it belongs to.
-    - Write in a captivating, sophisticated tone suitable for a travel page.
-    - Keep the caption between 3 to 4 sentences.
-    - End with 4-5 relevant hashtags.
+    - MAXIMUM 3 SENTENCES. Write exactly 2 or 3 sentences. Under no circumstances should you write more than 3 sentences.
+    - NO HASHTAGS. Do not use any hashtags at all.
+    - DO NOT describe the visual appearance of the location (no mentioning the time of day, lighting, weather, or colors).
+    - Focus entirely on a captivating fact about the history, local mythology, or cultural significance of the destination.
+    - Include the flag emoji of the country it belongs to.
+    - To gain followers and drive algorithmic engagement, make your final sentence a short, engaging question for the audience to answer in the comments.
     """
     response = client.models.generate_content(
         model='gemini-3.8-flash',
