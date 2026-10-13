@@ -102,7 +102,7 @@ def pick_hook_style(h):
 
 # ---------------------------------------------------------------- photos
 def crop_for_instagram(raw_url):
-    return f"{raw_url}&w=1080&h=1350&fit=crop&crop=entropy&q=85&fm=jpg"
+    return f"{raw_url}&w=1440&h=1800&fit=crop&crop=entropy&q=90&fm=jpg"
 
 
 def search_unsplash(location, exclude):
@@ -122,7 +122,7 @@ def search_unsplash(location, exclude):
             print(f"Unsplash returned {r.status_code}: {r.text[:200]}")
             continue
         for p in r.json().get("results", []):
-            if p["id"] not in exclude and p["width"] >= 1600:
+            if p["id"] not in exclude and p["width"] >= 2400 and p["height"] >= 3200:
                 found[p["id"]] = p
     photos = sorted(found.values(), key=lambda p: p.get("likes", 0), reverse=True)[:30]
     random.shuffle(photos)
@@ -137,32 +137,55 @@ def ping_unsplash_download(photo):
 
 
 # ---------------------------------------------------------------- AI editor
+CTAS = [
+    "Save this for your next trip 🌊",
+    "Tag the person you'd bring here 👇",
+    "Where should we go next? Tell me below 👇",
+    "Send this to your travel buddy ✈️",
+    "Would you stay here a week or a month? 👇",
+    "Drop a ☀️ if this is on your list",
+    "Bookmark this for your summer plans 🌴",
+    "Which slide is your favorite? 👇",
+    "Save it now, thank yourself later 🌅",
+    "Double tap if you could live here 💙",
+]
+
 EDITOR_PROMPT = """You are the editor of a Mediterranean travel Instagram account.
 You get {n} photos found by searching "{location}", numbered 0 to {last} in order.
 
 Return ONLY JSON with these keys:
 - scores: list of {n} integers (1 to 10), one per photo in order. High means bright, sunny, happy,
-  sharp, well composed, scroll stopping. Penalize haze, overcast sky, crowds, clutter, heavy filters,
-  visible text or logos, and photos that clearly do not show the same region as the others.
+  razor sharp, clean, well composed and scroll stopping. Judge technical quality at this resolution and
+  penalize blur, noise, over sharpening, heavy HDR or filters, tilted horizons, a low resolution phone look,
+  haze, overcast sky, crowds, clutter, visible text or logos, and photos that clearly do not show the
+  same region as the others.
 - place: the most specific place shown by most of the good photos (city, island or village),
   or the search term if unsure
 - country: its country
 - flag: country flag emoji
 - hook: {hook_style}. 3 to 8 words. No hyphens or dashes.
-- fact: ONE short sentence about the place. Only state something you are highly confident is true;
-  if unsure, write a short evocative observation instead. No hyphens or dashes.
+- description: 2 to 3 short sentences, 45 words maximum, painting a vivid and specific picture of the place:
+  what you would see, smell or taste there, plus one surprising or useful detail. Only include details you are
+  confident are true. Do not start with the place name. No hyphens or dashes.
+- tip: one short practical travel tip (best months, a local dish to try, how to get there), or an empty
+  string if you are not sure. No hyphens or dashes.
 - hashtags: 3 to 4 relevant lowercase hashtags including the #
+
+Be fresh. Do NOT reuse or closely echo any of these recent hooks and openings: {recent}
 """
 
 
-def edit_with_gemini(photos, location, hook_style):
+def edit_with_gemini(photos, location, hook_style, h):
+    recent = [p.get("hook", "") for p in h["posts"][-8:] if p.get("hook")]
+    recent += [p.get("opening", "") for p in h["posts"][-8:] if p.get("opening")]
     parts = []
     for i, p in enumerate(photos):
-        img = requests.get(p["urls"]["small"], timeout=30).content
+        img = requests.get(p["urls"]["regular"], timeout=30).content
         parts.append(f"Photo {i}:")
         parts.append(types.Part.from_bytes(data=img, mime_type="image/jpeg"))
     parts.append(EDITOR_PROMPT.format(
-        n=len(photos), last=len(photos) - 1, location=location, hook_style=HOOK_STYLES[hook_style]))
+        n=len(photos), last=len(photos) - 1, location=location,
+        hook_style=HOOK_STYLES[hook_style], recent="; ".join(recent) or "none"))
     for attempt in range(3):
         try:
             resp = client.models.generate_content(
@@ -173,6 +196,7 @@ def edit_with_gemini(photos, location, hook_style):
             data = json.loads(resp.text)
             if len(data["scores"]) != len(photos):
                 raise ValueError("score count mismatch")
+            data["description"], data["hook"], data["place"]
             return data
         except Exception as e:
             print(f"Gemini error (attempt {attempt + 1}/3): {e}")
@@ -181,23 +205,30 @@ def edit_with_gemini(photos, location, hook_style):
 
 
 def clean(text):
-    return re.sub(r"\s*[\u2013\u2014]\s*|\s+-\s+", ", ", text).strip()
+    return re.sub(r"\s*[\u2013\u2014]\s*|\s+-\s+", ", ", text or "").strip()
 
 
-def build_caption(d):
-    return "\n".join([
+def build_caption(d, h):
+    recent_ctas = [p.get("cta") for p in h["posts"][-4:]]
+    options = [c for c in CTAS if c not in recent_ctas] or CTAS
+    cta = random.choice(options)
+    d["_cta"] = cta
+    lines = [
         f"{d['place']}, {d['country']} ☀️ {d['flag']}",
         clean(d["hook"]),
         "",
-        clean(d["fact"]),
-        "",
-        "Save this for your next trip 🌊 Send it to who you'd go with 👇",
-        "",
-        " ".join(d["hashtags"][:4]),
-    ])
+        clean(d["description"]),
+    ]
+    tip = clean(d.get("tip"))
+    if tip:
+        lines += ["", f"💡 {tip}"]
+    lines += ["", cta, "", " ".join(d["hashtags"][:4])]
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------- instagram
+
+
 def graph_get(path, **params):
     params["access_token"] = ACCESS_TOKEN
     return requests.get(f"{GRAPH}/{path}", params=params, timeout=30).json()
@@ -267,7 +298,7 @@ def run_post():
         photos = search_unsplash(location, used)
         if len(photos) < MIN_SLIDES:
             continue
-        d = edit_with_gemini(photos, location, style)
+        d = edit_with_gemini(photos, location, style, h)
         ranked = sorted(zip(d["scores"], photos), key=lambda x: x[0], reverse=True)
         keep = [(s, p) for s, p in ranked if s >= MIN_SLIDE_SCORE][:CAROUSEL_SIZE]
         print(f"Scores: {sorted(d['scores'], reverse=True)} -> keeping {len(keep)}")
@@ -280,7 +311,7 @@ def run_post():
     for p in chosen:
         ping_unsplash_download(p)
 
-    caption = build_caption(d)
+    caption = build_caption(d, h)
     print(caption)
     media_id = post_carousel([crop_for_instagram(p["urls"]["raw"]) for p in chosen], caption, d["place"])
     print(f"Published {media_id}")
@@ -291,6 +322,9 @@ def run_post():
         "location": location,
         "place": d["place"],
         "style": style,
+        "hook": d["hook"],
+        "opening": " ".join(d["description"].split()[:3]),
+        "cta": d["_cta"],
         "photo_ids": [p["id"] for p in chosen],
         "insights": None,
     })
