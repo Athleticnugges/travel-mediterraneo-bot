@@ -20,20 +20,18 @@ SEARCH_TERMS = [
 def get_unsplash_photo():
     for _ in range(3):
         location = random.choice(SEARCH_TERMS)
-        search_query = f"{location} vibrant sunny clear blue sky landscape empty scenery".replace(' ', '+')
+        # Stacking extreme brightness keywords to force the happiest, sun-filled photos
+        search_query = f"{location} bright sunshine happy sunny vibrant clear blue sky landscape empty".replace(' ', '+')
         
-        # Switch to /search/photos to isolate the top 30 highest-ranked images
         url = f"https://api.unsplash.com/search/photos?query={search_query}&orientation=squarish&per_page=30&client_id={UNSPLASH_KEY}"
         res = requests.get(url).json()
         
         if 'results' in res and len(res['results']) > 0:
-            # Pick a random photo from the premium pool of top results
             chosen_photo = random.choice(res['results'])
             image_url = chosen_photo['urls']['regular']
             return image_url, location
 
-    # Fallback to the same highly-ranked search logic
-    fallback_url = f"https://api.unsplash.com/search/photos?query=Mediterranean+vibrant+sunny+clear+sky+landscape+empty&orientation=squarish&per_page=30&client_id={UNSPLASH_KEY}"
+    fallback_url = f"https://api.unsplash.com/search/photos?query=Mediterranean+bright+sunshine+happy+sunny+vibrant+clear+sky+landscape+empty&orientation=squarish&per_page=30&client_id={UNSPLASH_KEY}"
     res = requests.get(fallback_url).json()
     chosen_photo = random.choice(res['results'])
     return chosen_photo['urls']['regular'], "Mediterranean Sea"
@@ -44,14 +42,16 @@ def generate_caption(location):
     Generate a minimalist Instagram caption for the Mediterranean location: {location}.
 
     CRITICAL INSTRUCTIONS:
-    Output EXACTLY this format and nothing else. Do not write any sentences or descriptions.
-
-    [Specific Island/City Name], [Country] ☀️ [Country Flag Emoji]
-    [Blank Line]
-    #[hashtag1] #[hashtag2] #[hashtag3]
+    Output EXACTLY this format and nothing else. 
+    1. Line 1: [Specific Island/City Name], [Country] ☀️ [Country Flag Emoji]
+    2. Line 2: Exactly ONE short, interesting sentence sharing a random fact about the location.
+    3. Line 3: A blank line.
+    4. Line 4: Exactly 3 to 4 hashtags.
+    DO NOT USE HYPHENS ("-") OR DASHES ANYWHERE.
 
     Example Output:
     Syros island, Greece ☀️ 🇬🇷
+    This hidden gem was once the maritime center of Greece before Athens took over.
 
     #syros #syrosisland #greece
     """
@@ -62,7 +62,9 @@ def generate_caption(location):
                 model='gemini-3.8-flash',
                 contents=prompt,
             )
-            return response.text.strip()
+            # Hyphen scrubber remains active to protect the clean formatting
+            clean_caption = response.text.strip().replace("-", " ").replace("  ", " ")
+            return clean_caption
         except Exception as e:
             print(f"Gemini API error (attempt {attempt + 1}/3): {e}")
             if attempt < 2:
@@ -116,7 +118,7 @@ def post_to_instagram(image_url, caption, location):
     return requests.post(publish_url, data=publish_payload).json()
 
 def run():
-    print("Fetching top-rated Mediterranean photo...")
+    print("Fetching top-rated sunny Mediterranean photo...")
     image_url, location = get_unsplash_photo()
     
     print(f"Generating caption for {location}...")
