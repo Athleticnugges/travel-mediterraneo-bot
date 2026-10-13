@@ -28,11 +28,12 @@ def get_unsplash_photo():
         if 'errors' not in res and 'urls' in res:
             image_url = res['urls']['regular']
             location = res.get('location', {}).get('name') or base_location
-            return image_url, location
+            # We return the base_location specifically to use for the Facebook location search
+            return image_url, location, base_location
 
     fallback_url = f"https://api.unsplash.com/photos/random?query=Mediterranean+bright+sunny+daylight&orientation=squarish&client_id={UNSPLASH_KEY}"
     res = requests.get(fallback_url).json()
-    return res['urls']['regular'], "Mediterranean Sea"
+    return res['urls']['regular'], "Mediterranean Sea", "Mediterranean Sea"
 
 def generate_caption(location):
     client = genai.Client(api_key=GEMINI_KEY)
@@ -67,13 +68,35 @@ def generate_caption(location):
             else:
                 raise Exception("Gemini API failed after 3 attempts.") from e
 
-def post_to_instagram(image_url, caption):
+def get_facebook_location_id(location_query):
+    search_url = "https://graph.facebook.com/v26.0/pages/search"
+    params = {
+        'q': location_query,
+        'fields': 'id,name',
+        'access_token': ACCESS_TOKEN
+    }
+    try:
+        res = requests.get(search_url, params=params).json()
+        if 'data' in res and len(res['data']) > 0:
+            return res['data'][0]['id']
+    except Exception as e:
+        print(f"Location search warning: {e}")
+    return None
+
+def post_to_instagram(image_url, caption, base_location):
+    location_id = get_facebook_location_id(base_location)
+    
     container_url = f"https://graph.facebook.com/v26.0/{ACCOUNT_ID}/media"
     payload = {
         'image_url': image_url,
         'caption': caption,
         'access_token': ACCESS_TOKEN
     }
+    
+    if location_id:
+        payload['location_id'] = location_id
+        print(f"Attaching geotag ID: {location_id}")
+
     res = requests.post(container_url, data=payload).json()
     creation_id = res.get('id')
     if not creation_id:
@@ -90,13 +113,13 @@ def post_to_instagram(image_url, caption):
 
 def run():
     print("Fetching random Mediterranean photo...")
-    image_url, location = get_unsplash_photo()
+    image_url, location, base_location = get_unsplash_photo()
     
     print(f"Generating caption for {location}...")
     caption = generate_caption(location)
     
     print("Publishing to Instagram...")
-    post_to_instagram(image_url, caption)
+    post_to_instagram(image_url, caption, base_location)
     print("Successfully published! Hands-off mode complete.")
 
 if __name__ == "__main__":
