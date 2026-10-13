@@ -106,18 +106,26 @@ def crop_for_instagram(raw_url):
 
 
 def search_unsplash(location, exclude):
-    params = {
-        "query": f"{location} sunny",
-        "orientation": "portrait",
-        "content_filter": "high",
-        "order_by": "relevant",
-        "per_page": 30,
-        "client_id": UNSPLASH_KEY,
-    }
-    r = requests.get("https://api.unsplash.com/search/photos", params=params, timeout=30)
-    r.raise_for_status()
-    photos = [p for p in r.json().get("results", []) if p["id"] not in exclude and p["width"] >= 1600]
-    photos.sort(key=lambda p: p.get("likes", 0), reverse=True)
+    found = {}
+    for page in random.sample(range(1, 6), 3):
+        params = {
+            "query": f"{location} sunny",
+            "orientation": "portrait",
+            "content_filter": "high",
+            "order_by": "relevant",
+            "per_page": 30,
+            "page": page,
+            "client_id": UNSPLASH_KEY,
+        }
+        r = requests.get("https://api.unsplash.com/search/photos", params=params, timeout=30)
+        if r.status_code != 200:
+            print(f"Unsplash returned {r.status_code}: {r.text[:200]}")
+            continue
+        for p in r.json().get("results", []):
+            if p["id"] not in exclude and p["width"] >= 1600:
+                found[p["id"]] = p
+    photos = sorted(found.values(), key=lambda p: p.get("likes", 0), reverse=True)[:30]
+    random.shuffle(photos)
     return photos[:POOL_SIZE]
 
 
@@ -250,6 +258,7 @@ def post_carousel(image_urls, caption, place):
 def run_post():
     h = load_history()
     used = used_photo_ids(h)
+    print("History:", len(h["posts"]), "posts,", len(used), "photos already used")
     style = pick_hook_style(h)
 
     for attempt in range(4):
