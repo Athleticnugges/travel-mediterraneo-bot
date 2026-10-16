@@ -7,7 +7,6 @@ from google import genai
 ACCESS_TOKEN = os.environ["INSTAGRAM_ACCESS_TOKEN"]
 ACCOUNT_ID = os.environ["INSTAGRAM_ACCOUNT_ID"]
 GEMINI_KEY = os.environ["GEMINI_API_KEY"]
-PIXABAY_KEY = os.environ["PIXABAY_API_KEY"]
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
 GRAPH = "https://graph.facebook.com/v26.0"
 
@@ -18,63 +17,33 @@ PLACES = [
     "Dubrovnik", "Malta", "Cyprus"
 ]
 
-def get_pixabay_video():
-    for _ in range(10):
+def get_vertical_video():
+    for _ in range(5):
         location = random.choice(PLACES)
-        url = "https://pixabay.com/api/videos/"
+        # Query Coverr's API specifically filtering for vertical (9:16) footage
+        url = f"https://api.coverr.co/videos?query={location}+beach+sea&aspect_ratio=9:16&urls=true"
         
-        # Explicitly search for vertical/portrait video clips
-        params = {
-            "key": PIXABAY_KEY,
-            "q": f"{location} vertical sunny beach",
-            "video_type": "film",
-            "per_page": 50
-        }
-        
-        res = requests.get(url, params=params).json()
+        res = requests.get(url).json()
         hits = res.get("hits", [])
         
-        # Strict validation against metadata tags and dimensions
-        valid_vertical_hits = []
-        for h in hits:
-            tags = (h.get("tags") or "").lower()
-            v_data = h.get("videos", {})
-            
-            # Check medium and small dimensions
-            med_w = v_data.get("medium", {}).get("width", 0)
-            med_h = v_data.get("medium", {}).get("height", 0)
-            
-            # Identify vertical videos via height > width OR vertical keywords in tags
-            if med_h > med_w or any(k in tags for k in ["vertical", "portrait", "mobile"]):
-                valid_vertical_hits.append(h)
-        
-        if valid_vertical_hits:
-            chosen = random.choice(valid_vertical_hits)
-            v_data = chosen["videos"]
-            
-            # Select stream URL prioritizing highest quality stream
-            for size in ["large", "medium", "small"]:
-                stream = v_data.get(size, {})
-                if stream.get("url"):
-                    return stream["url"], location
+        if hits:
+            chosen = random.choice(hits)
+            urls = chosen.get("urls", {})
+            # Select highest quality vertical MP4 stream
+            video_url = urls.get("mp4_download") or urls.get("mp4")
+            if video_url:
+                return video_url, location
 
-    # Fallback to broader vertical Mediterranean search if specific location yields no vertical tags
-    fallback_url = "https://pixabay.com/api/videos/"
-    fallback_params = {
-        "key": PIXABAY_KEY,
-        "q": "Mediterranean vertical sunny sea",
-        "video_type": "film",
-        "per_page": 50
-    }
-    f_res = requests.get(fallback_url, params=fallback_params).json()
+    # Fallback guaranteed vertical Mediterranean search
+    fallback_url = "https://api.coverr.co/videos?query=mediterranean+sea&aspect_ratio=9:16&urls=true"
+    f_res = requests.get(fallback_url).json()
     f_hits = f_res.get("hits", [])
     if f_hits:
         chosen = random.choice(f_hits)
-        v_data = chosen["videos"]
-        stream = v_data.get("medium", {}) or v_data.get("small", {})
-        return stream["url"], "Mediterranean Sea"
+        video_url = chosen["urls"].get("mp4_download") or chosen["urls"].get("mp4")
+        return video_url, "Mediterranean Sea"
 
-    raise Exception("Could not find a strictly vertical video on Pixabay.")
+    raise Exception("Could not find a vertical 9:16 video on Coverr.")
 
 def generate_caption(location):
     client = genai.Client(api_key=GEMINI_KEY)
@@ -102,10 +71,10 @@ def generate_caption(location):
             if attempt < 3:
                 time.sleep(30)
             else:
-                raise Exception("Gemini API failed after 4 attempts due to server traffic.") from e
+                raise Exception("Gemini API failed after 4 attempts.") from e
 
 def wait_until_ready(container_id):
-    print("Waiting for Meta servers to process the vertical video container...")
+    print("Waiting for Meta servers to process vertical video file...")
     for _ in range(60):
         url = f"{GRAPH}/{container_id}?fields=status_code&access_token={ACCESS_TOKEN}"
         res = requests.get(url).json()
@@ -150,9 +119,9 @@ def post_reel(video_url, caption):
     return pub_res['id']
 
 def run():
-    print("Fetching strictly vertical Mediterranean video from Pixabay...")
-    video_url, location = get_pixabay_video()
-    print(f"Selected Video Stream URL: {video_url}")
+    print("Fetching strictly vertical (9:16) video from Coverr...")
+    video_url, location = get_vertical_video()
+    print(f"Selected 9:16 Video Stream: {video_url}")
     
     print(f"Generating caption for {location}...")
     caption = generate_caption(location)
