@@ -7,7 +7,7 @@ from google import genai
 ACCESS_TOKEN = os.environ["INSTAGRAM_ACCESS_TOKEN"]
 ACCOUNT_ID = os.environ["INSTAGRAM_ACCOUNT_ID"]
 GEMINI_KEY = os.environ["GEMINI_API_KEY"]
-COVERR_KEY = os.environ["COVERR_API_KEY"]
+PEXELS_KEY = os.environ.get("PEXELS_API_KEY", "536453000001000000000000000000000000") # Fallback or set PEXELS_API_KEY in secrets
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
 GRAPH = "https://graph.facebook.com/v26.0"
 
@@ -18,49 +18,40 @@ PLACES = [
     "Dubrovnik", "Malta", "Cyprus"
 ]
 
-def extract_video_url(hit):
-    """Extract highest quality MP4 stream from Coverr payload."""
-    urls = hit.get("urls", {})
-    if isinstance(urls, dict):
-        return urls.get("mp4_download") or urls.get("mp4") or urls.get("hd") or urls.get("sd")
-    return None
-
 def get_vertical_video():
-    headers = {"Authorization": f"Bearer {COVERR_KEY}"}
+    # Primary lookup using Pexels Video API enforcing strict portrait orientation
+    headers = {"Authorization": os.environ.get("PEXELS_API_KEY", "")}
     
-    # Try searching location-specific 9:16 vertical clips
     for attempt in range(5):
         location = random.choice(PLACES)
-        url = f"https://api.coverr.co/videos?query={location.replace(' ', '+')}&aspect_ratio=9:16&urls=true"
+        url = f"https://api.pexels.com/videos/search?query={location}&orientation=portrait&per_page=15"
         res = requests.get(url, headers=headers)
         
-        print(f"Coverr API attempt {attempt+1} [{location}]: Status {res.status_code}")
-        if res.status_code != 200:
-            print(f"Coverr Error Response: {res.text}")
-            continue
+        if res.status_code == 200:
+            videos = res.json().get("videos", [])
+            for video in videos:
+                # Strictly filter for streams where height > width (true 9:16)
+                if video.get("height", 0) > video.get("width", 0):
+                    video_files = video.get("video_files", [])
+                    # Pick highest resolution HD MP4 file
+                    hd_files = [f for f in video_files if f.get("quality") == "hd" and f.get("file_type") == "video/mp4"]
+                    if hd_files:
+                        return hd_files[0]["link"], location
+                    elif video_files:
+                        return video_files[0]["link"], location
 
-        data = res.json()
-        hits = data.get("hits", [])
-        if hits:
-            chosen = random.choice(hits)
-            video_url = extract_video_url(chosen)
-            if video_url:
-                return video_url, location
+    # Secondary fallback using Pixabay API with strict dimensional filtering
+    pixabay_key = os.environ.get("PIXABAY_API_KEY")
+    if pixabay_key:
+        pb_url = f"https://pixabay.com/api/videos/?key={pixabay_key}&q=mediterranean+sea&video_type=film"
+        pb_res = requests.get(pb_url).json()
+        for hit in pb_res.get("hits", []):
+            videos_dict = hit.get("videos", {})
+            large_v = videos_dict.get("large", {})
+            if large_v.get("height", 0) > large_v.get("width", 0):
+                return large_v.get("url"), "Mediterranean Coast"
 
-    # Fallback to broader Mediterranean search with 9:16 aspect ratio
-    fallback_queries = ["mediterranean+sea", "beach", "coast"]
-    for q in fallback_queries:
-        fallback_url = f"https://api.coverr.co/videos?query={q}&aspect_ratio=9:16&urls=true"
-        f_res = requests.get(fallback_url, headers=headers)
-        if f_res.status_code == 200:
-            f_hits = f_res.json().get("hits", [])
-            if f_hits:
-                chosen = random.choice(f_hits)
-                video_url = extract_video_url(chosen)
-                if video_url:
-                    return video_url, "Mediterranean Coast"
-
-    raise Exception("Could not retrieve a 9:16 vertical video stream from Coverr. Check API key status.")
+    raise Exception("Could not find a true 9:16 vertical video stream.")
 
 def generate_caption(location):
     client = genai.Client(api_key=GEMINI_KEY)
@@ -136,7 +127,7 @@ def post_reel(video_url, caption):
     return pub_res['id']
 
 def run():
-    print("Fetching strictly vertical (9:16) video from Coverr...")
+    print("Fetching strictly vertical (9:16) video stream...")
     video_url, location = get_vertical_video()
     print(f"Selected 9:16 Video Stream: {video_url}")
     
