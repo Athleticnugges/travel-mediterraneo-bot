@@ -20,7 +20,6 @@ PLACES = [
     "Dubrovnik", "Malta", "Cyprus"
 ]
 
-# High quality public Mediterranean stock fallback streams (100% uptime guaranteed)
 FALLBACK_STREAMS = [
     ("https://assets.mixkit.co/videos/preview/mixkit-aerial-view-of-a-beach-with-clear-water-41527-large.mp4", "Amalfi Coast"),
     ("https://assets.mixkit.co/videos/preview/mixkit-drone-view-of-a-cliff-by-the-sea-41525-large.mp4", "Santorini"),
@@ -53,17 +52,19 @@ def process_to_vertical(input_path, output_path="final_reel.mp4"):
     width, height = get_video_dimensions(input_path)
     print(f"Physical Video Dimensions: {width}x{height}")
     
-    if height >= width * 1.5:
-        print("Video is natively vertical. Skipping crop...")
-        return input_path
-
-    print("Video is horizontal or misformatted. Center-cropping to 1080x1920 (9:16)...")
+    # Crop to 9:16 aspect ratio (1080x1920)
     vf_filter = "crop=ih*(9/16):ih,scale=1080:1920"
+    
+    # Generate a silent AAC audio track if missing and add +faststart metadata for Meta ingest
     cmd = [
-        "ffmpeg", "-y", "-i", input_path,
+        "ffmpeg", "-y",
+        "-i", input_path,
+        "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
         "-vf", vf_filter,
-        "-c:v", "libx264", "-crf", "20", "-preset", "fast",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "20", "-preset", "fast",
         "-c:a", "aac", "-b:a", "128k",
+        "-shortest",
+        "-movflags", "+faststart",
         output_path
     ]
     subprocess.run(cmd, check=True)
@@ -80,7 +81,6 @@ def upload_temp_host(file_path):
     return direct_url
 
 def fetch_candidate_video():
-    # 1. Try Coverr API with place names and broader fallback terms
     coverr_key = os.environ.get("COVERR_API_KEY")
     if coverr_key:
         headers = {"Authorization": f"Bearer {coverr_key}"}
@@ -98,12 +98,9 @@ def fetch_candidate_video():
                         v_url = urls.get("mp4_download") or urls.get("mp4") or urls.get("hd")
                         if v_url:
                             return v_url, term.title()
-                else:
-                    print(f"Coverr response error: {res.text[:200]}")
             except Exception as e:
                 print(f"Coverr fetch exception for {term}: {e}")
 
-    # 2. Try Pixabay API
     pixabay_key = os.environ.get("PIXABAY_API_KEY")
     if pixabay_key:
         try:
@@ -120,8 +117,7 @@ def fetch_candidate_video():
         except Exception as e:
             print(f"Pixabay fetch exception: {e}")
 
-    # 3. Fail-safe fallback to verified public CDN stream
-    print("APIs returned no candidates. Engaging fail-safe public stream backup...")
+    print("Engaging fail-safe public stream backup...")
     return random.choice(FALLBACK_STREAMS)
 
 def generate_caption(location):
@@ -155,7 +151,7 @@ def generate_caption(location):
 def wait_until_ready(container_id):
     print("Waiting for Meta servers to process vertical video file...")
     for _ in range(60):
-        url = f"{GRAPH}/{container_id}?fields=status_code&access_token={ACCESS_TOKEN}"
+        url = f"{GRAPH}/{container_id}?fields=status_code,status&access_token={ACCESS_TOKEN}"
         res = requests.get(url).json()
         status = res.get("status_code")
         
@@ -204,7 +200,7 @@ def run():
     print("Downloading video for physical stream analysis...")
     download_file(raw_url, "raw_input.mp4")
     
-    print("Enforcing physical 9:16 aspect ratio via FFmpeg...")
+    print("Enforcing physical 9:16 aspect ratio, AAC audio stream, and faststart metadata via FFmpeg...")
     final_file = process_to_vertical("raw_input.mp4")
     
     public_video_url = upload_temp_host(final_file)
