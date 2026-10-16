@@ -1,13 +1,15 @@
 import os
+import sys
 import time
+import json
 import random
 import requests
+import subprocess
 from google import genai
 
 ACCESS_TOKEN = os.environ["INSTAGRAM_ACCESS_TOKEN"]
 ACCOUNT_ID = os.environ["INSTAGRAM_ACCOUNT_ID"]
 GEMINI_KEY = os.environ["GEMINI_API_KEY"]
-COVERR_KEY = os.environ["COVERR_API_KEY"]
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
 GRAPH = "https://graph.facebook.com/v26.0"
 
@@ -18,41 +20,86 @@ PLACES = [
     "Dubrovnik", "Malta", "Cyprus"
 ]
 
-def get_vertical_video():
-    headers = {"Authorization": f"Bearer {COVERR_KEY}"}
-    
-    for _ in range(5):
-        location = random.choice(PLACES)
-        url = f"https://api.coverr.co/videos?query={location}&urls=true"
-        res = requests.get(url, headers=headers).json()
-        
-        if "error" in res:
-            print(f"Coverr API Warning: {res}")
-            continue
-            
-        # Strictly enforce vertical aspect ratio using raw file dimensions
-        hits = res.get("hits", [])
-        vertical_hits = [h for h in hits if h.get("width", 1) < h.get("height", 0)]
-        
-        if vertical_hits:
-            chosen = random.choice(vertical_hits)
-            urls = chosen.get("urls", {})
-            video_url = urls.get("mp4_download") or urls.get("mp4")
-            if video_url:
-                return video_url, location
+def download_file(url, local_filename):
+    with requests.get(url, stream=True) as r:
+        r.raise_for_status()
+        with open(local_filename, 'wb') as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
+    return local_filename
 
-    # Guaranteed vertical fallback if specific locations lack portrait footage
-    fallback_url = "https://api.coverr.co/videos?query=mediterranean+beach+vertical&urls=true"
-    f_res = requests.get(fallback_url, headers=headers).json()
-    f_hits = [h for h in f_res.get("hits", []) if h.get("width", 1) < h.get("height", 0)]
-    
-    if f_hits:
-        chosen = random.choice(f_hits)
-        video_url = chosen["urls"].get("mp4_download") or chosen["urls"].get("mp4")
-        if video_url:
-            return video_url, "Mediterranean Sea"
+def get_video_dimensions(file_path):
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=width,height",
+        "-of", "json", file_path
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    data = json.loads(result.stdout)
+    stream = data["streams"][0]
+    return int(stream["width"]), int(stream["height"])
 
-    raise Exception("Could not find a vertical video on Coverr. Verify your COVERR_API_KEY is correct.")
+def process_to_vertical(input_path, output_path="final_reel.mp4"):
+    width, height = get_video_dimensions(input_path)
+    print(f"Physical Video Dimensions: {width}x{height}")
+    
+    if height >= width * 1.5:
+        print("Video is natively vertical. Skipping crop...")
+        return input_path
+
+    print("Video is horizontal or misformatted. Center-cropping to 1080x1920 (9:16)...")
+    vf_filter = "crop=ih*(9/16):ih,scale=1080:1920"
+    cmd = [
+        "ffmpeg", "-y", "-i", input_path,
+        "-vf", vf_filter,
+        "-c:v", "libx264", "-crf", "20", "-preset", "fast",
+        "-c:a", "aac", "-b:a", "128k",
+        output_path
+    ]
+    subprocess.run(cmd, check=True)
+    return output_path
+
+def upload_temp_host(file_path):
+    print("Uploading verified 9:16 video to temporary public host...")
+    with open(file_path, "rb") as f:
+        res = requests.post("https://tmpfiles.org/api/v1/upload", files={"file": f}).json()
+    
+    raw_url = res["data"]["url"]
+    direct_url = raw_url.replace("https://tmpfiles.org/", "https://tmpfiles.org/dl/")
+    print(f"Direct Public Video URL: {direct_url}")
+    return direct_url
+
+def fetch_candidate_video():
+    coverr_key = os.environ.get("COVERR_API_KEY")
+    if coverr_key:
+        headers = {"Authorization": f"Bearer {coverr_key}"}
+        for _ in range(3):
+            loc = random.choice(PLACES)
+            url = f"https://api.coverr.co/videos?query={loc.replace(' ', '+')}&urls=true"
+            res = requests.get(url, headers=headers)
+            if res.status_code == 200:
+                hits = res.json().get("hits", [])
+                if hits:
+                    chosen = random.choice(hits)
+                    urls = chosen.get("urls", {})
+                    v_url = urls.get("mp4_download") or urls.get("mp4")
+                    if v_url:
+                        return v_url, loc
+
+    pixabay_key = os.environ.get("PIXABAY_API_KEY")
+    if pixabay_key:
+        url = f"https://pixabay.com/api/videos/?key={pixabay_key}&q=mediterranean+sea&video_type=film"
+        res = requests.get(url)
+        if res.status_code == 200:
+            hits = res.json().get("hits", [])
+            if hits:
+                chosen = random.choice(hits)
+                v_url = chosen.get("videos", {}).get("large", {}).get("url")
+                if v_url:
+                    return v_url, "Mediterranean Sea"
+
+    raise Exception("Could not fetch a video candidate from available APIs.")
 
 def generate_caption(location):
     client = genai.Client(api_key=GEMINI_KEY)
@@ -128,14 +175,21 @@ def post_reel(video_url, caption):
     return pub_res['id']
 
 def run():
-    print("Fetching strictly vertical (9:16) video from Coverr...")
-    video_url, location = get_vertical_video()
-    print(f"Selected 9:16 Video Stream: {video_url}")
+    print("Fetching raw video candidate...")
+    raw_url, location = fetch_candidate_video()
+    
+    print("Downloading video for physical stream analysis...")
+    download_file(raw_url, "raw_input.mp4")
+    
+    print("Enforcing physical 9:16 aspect ratio via FFmpeg...")
+    final_file = process_to_vertical("raw_input.mp4")
+    
+    public_video_url = upload_temp_host(final_file)
     
     print(f"Generating caption for {location}...")
     caption = generate_caption(location)
     
-    reel_id = post_reel(video_url, caption)
+    reel_id = post_reel(public_video_url, caption)
     print(f"Successfully published Reel ID: {reel_id}")
 
 if __name__ == "__main__":
