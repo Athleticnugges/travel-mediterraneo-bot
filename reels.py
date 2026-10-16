@@ -33,14 +33,12 @@ def get_pixabay_video():
         hits = res.get("hits", [])
         
         if hits:
-            # Prefer vertical orientations where height > width
             vertical_hits = [
                 h for h in hits 
                 if h["videos"].get("medium", {}).get("height", 0) > h["videos"].get("medium", {}).get("width", 0)
             ]
             chosen = random.choice(vertical_hits) if vertical_hits else random.choice(hits)
             
-            # Fetch medium stream (1920x1080) or small stream (1280x720)
             v_data = chosen["videos"]
             video_url = v_data.get("medium", {}).get("url") or v_data.get("small", {}).get("url")
             
@@ -63,11 +61,21 @@ def generate_caption(location):
     DO NOT USE HYPHENS ("-") OR DASHES ANYWHERE.
     """
     
-    response = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=prompt,
-    )
-    return response.text.strip().replace("-", " ").replace("  ", " ")
+    # Retry loop to handle temporary 503 service spikes automatically
+    for attempt in range(4):
+        try:
+            response = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=prompt,
+            )
+            return response.text.strip().replace("-", " ").replace("  ", " ")
+        except Exception as e:
+            print(f"Gemini API attempt {attempt + 1}/4 failed: {e}")
+            if attempt < 3:
+                print("Waiting 30 seconds before retrying...")
+                time.sleep(30)
+            else:
+                raise Exception("Gemini API failed after 4 attempts due to server traffic.") from e
 
 def wait_until_ready(container_id):
     print("Waiting for Meta servers to process the video container...")
