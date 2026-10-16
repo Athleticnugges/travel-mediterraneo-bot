@@ -19,37 +19,62 @@ PLACES = [
 ]
 
 def get_pixabay_video():
-    # Increased attempts to guarantee we find a strictly vertical video
     for _ in range(10):
         location = random.choice(PLACES)
         url = "https://pixabay.com/api/videos/"
+        
+        # Explicitly search for vertical/portrait video clips
         params = {
             "key": PIXABAY_KEY,
-            "q": f"{location} sunny beach",
+            "q": f"{location} vertical sunny beach",
             "video_type": "film",
-            "per_page": 50  # Increased search pool
+            "per_page": 50
         }
         
         res = requests.get(url, params=params).json()
         hits = res.get("hits", [])
         
-        # STRICT FILTER: Height must be greater than width. No fallbacks to horizontal.
-        vertical_hits = [
-            h for h in hits 
-            if h["videos"].get("medium", {}).get("height", 0) > h["videos"].get("medium", {}).get("width", 0)
-        ]
+        # Strict validation against metadata tags and dimensions
+        valid_vertical_hits = []
+        for h in hits:
+            tags = (h.get("tags") or "").lower()
+            v_data = h.get("videos", {})
+            
+            # Check medium and small dimensions
+            med_w = v_data.get("medium", {}).get("width", 0)
+            med_h = v_data.get("medium", {}).get("height", 0)
+            
+            # Identify vertical videos via height > width OR vertical keywords in tags
+            if med_h > med_w or any(k in tags for k in ["vertical", "portrait", "mobile"]):
+                valid_vertical_hits.append(h)
         
-        if vertical_hits:
-            chosen = random.choice(vertical_hits)
+        if valid_vertical_hits:
+            chosen = random.choice(valid_vertical_hits)
             v_data = chosen["videos"]
             
-            # Prioritize the absolute highest resolution stream (4K 'large' first, then 1080p 'medium')
+            # Select stream URL prioritizing highest quality stream
             for size in ["large", "medium", "small"]:
                 stream = v_data.get(size, {})
-                if stream.get("url") and stream.get("height", 0) > stream.get("width", 0):
+                if stream.get("url"):
                     return stream["url"], location
 
-    raise Exception("Could not find a strictly vertical, high-quality video on Pixabay after 10 attempts.")
+    # Fallback to broader vertical Mediterranean search if specific location yields no vertical tags
+    fallback_url = "https://pixabay.com/api/videos/"
+    fallback_params = {
+        "key": PIXABAY_KEY,
+        "q": "Mediterranean vertical sunny sea",
+        "video_type": "film",
+        "per_page": 50
+    }
+    f_res = requests.get(fallback_url, params=fallback_params).json()
+    f_hits = f_res.get("hits", [])
+    if f_hits:
+        chosen = random.choice(f_hits)
+        v_data = chosen["videos"]
+        stream = v_data.get("medium", {}) or v_data.get("small", {})
+        return stream["url"], "Mediterranean Sea"
+
+    raise Exception("Could not find a strictly vertical video on Pixabay.")
 
 def generate_caption(location):
     client = genai.Client(api_key=GEMINI_KEY)
@@ -75,14 +100,13 @@ def generate_caption(location):
         except Exception as e:
             print(f"Gemini API attempt {attempt + 1}/4 failed: {e}")
             if attempt < 3:
-                print("Waiting 30 seconds before retrying...")
                 time.sleep(30)
             else:
                 raise Exception("Gemini API failed after 4 attempts due to server traffic.") from e
 
 def wait_until_ready(container_id):
-    print("Waiting for Meta servers to process the high-quality video container...")
-    for _ in range(60): # Increased wait time for larger 4K video file processing
+    print("Waiting for Meta servers to process the vertical video container...")
+    for _ in range(60):
         url = f"{GRAPH}/{container_id}?fields=status_code&access_token={ACCESS_TOKEN}"
         res = requests.get(url).json()
         status = res.get("status_code")
@@ -126,9 +150,9 @@ def post_reel(video_url, caption):
     return pub_res['id']
 
 def run():
-    print("Fetching strictly vertical, high-quality Mediterranean video from Pixabay...")
+    print("Fetching strictly vertical Mediterranean video from Pixabay...")
     video_url, location = get_pixabay_video()
-    print(f"Selected Video Stream: {video_url}")
+    print(f"Selected Video Stream URL: {video_url}")
     
     print(f"Generating caption for {location}...")
     caption = generate_caption(location)
