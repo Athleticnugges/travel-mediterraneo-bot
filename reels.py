@@ -2,16 +2,12 @@ import os
 import time
 import random
 import requests
-import subprocess
-import json
 from google import genai
 
 ACCESS_TOKEN = os.environ["INSTAGRAM_ACCESS_TOKEN"]
 ACCOUNT_ID = os.environ["INSTAGRAM_ACCOUNT_ID"]
 GEMINI_KEY = os.environ["GEMINI_API_KEY"]
-PEXELS_KEY = os.environ.get("PEXELS_API_KEY", "")
-COVERR_KEY = os.environ.get("COVERR_API_KEY", "")
-PIXABAY_KEY = os.environ.get("PIXABAY_API_KEY", "")
+COVERR_KEY = os.environ["COVERR_API_KEY"]
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
 GRAPH = "https://graph.facebook.com/v26.0"
 
@@ -22,114 +18,125 @@ PLACES = [
     "Dubrovnik", "Malta", "Cyprus"
 ]
 
-def verify_stream_dimensions_ffprobe(video_url):
-    """Probes the raw video stream header via HTTP to return true pixel dimensions."""
-    cmd = [
-        "ffprobe",
-        "-v", "error",
-        "-select_streams", "v:0",
-        "-show_entries", "stream=width,height:stream_tags=rotate",
-        "-of", "json",
-        video_url
-    ]
-    try:
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=12)
-        if result.returncode != 0:
-            return None, None
-        data = json.loads(result.stdout)
-        streams = data.get("streams", [])
-        if not streams:
-            return None, None
-        
-        width = int(streams[0].get("width", 0))
-        height = int(streams[0].get("height", 0))
-        
-        # Adjust for metadata rotation tags (e.g. mobile 90/270 degree rot)
-        tags = streams[0].get("tags", {})
-        rotation = int(tags.get("rotate", 0)) if "rotate" in tags else 0
-        if abs(rotation) in (90, 270):
-            width, height = height, width
-            
-        return width, height
-    except Exception as e:
-        print(f"ffprobe inspection failed: {e}")
-        return None, None
-
-def get_bulletproof_vertical_video():
-    candidates = []
+def get_vertical_video():
+    headers = {"Authorization": f"Bearer {COVERR_KEY}"}
     
-    # Collect candidate links from Pexels API
-    if PEXELS_KEY:
-        for _ in range(3):
-            loc = random.choice(PLACES)
-            url = f"https://api.pexels.com/videos/search?query={loc}&orientation=portrait&per_page=15"
-            res = requests.get(url, headers={"Authorization": PEXELS_KEY})
-            if res.status_code == 200:
-                for v in res.json().get("videos", []):
-                    for f in v.get("video_files", []):
-                        if f.get("file_type") == "video/mp4" and f.get("link"):
-                            candidates.append((f["link"], loc))
-
-    # Collect candidate links from Coverr API
-    if COVERR_KEY:
-        for _ in range(3):
-            loc = random.choice(PLACES)
-            url = f"https://api.coverr.co/videos?query={loc.replace(' ', '+')}&aspect_ratio=9:16&urls=true"
-            res = requests.get(url, headers={"Authorization": f"Bearer {COVERR_KEY}"})
-            if res.status_code == 200:
-                for hit in res.json().get("hits", []):
-                    urls = hit.get("urls", {})
-I completely understand your frustration. Stock video APIs are notoriously unreliable because contributors upload horizontal (16:9) drone footage inside vertical containers, or mislabel aspect ratio tags in the API metadata. Relying on API tags alone will always risk occasional letterboxing.
-
-The **bulletproof solution** is to handle video validation and formatting inside the GitHub Actions runner itself using **FFmpeg**:
-
-1. **Physical Stream Inspection**: The runner downloads the video and uses `ffprobe` to inspect the actual video stream dimensions, completely ignoring whatever the API claims.
-2. **Auto-Cropping Engine**: If the video is horizontal or letterboxed, FFmpeg automatically center-crops and rescales it to an exact full-screen **$1080 \times 1920$ (9:16)** format.
-3. **Guaranteed 9:16 Host**: Processed files are hosted with a direct public link before sending them to Meta, ensuring Meta **never** receives a horizontal video again.
-
----
-
-### Step 1: Update `.github/workflows/reels.yml`
-This adds `ffmpeg` to your GitHub runner so it can physically inspect and process video files.
-
-Run this command in your Mac terminal:
-
-```bash
-cd ~/travel-mediterraneo-bot
-
-cat << 'EOF' > .github/workflows/reels.yml
-name: Post Mediterranean Reel
-
-on:
-  schedule:
-    - cron: '0 16 * * *'
-  workflow_dispatch:
-
-jobs:
-  post:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-          
-      - name: Install FFmpeg
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
-          
-      - name: Install dependencies
-        run: pip install requests google-genai
+    for _ in range(5):
+        location = random.choice(PLACES)
+        url = f"https://api.coverr.co/videos?query={location}&urls=true"
+        res = requests.get(url, headers=headers).json()
         
-      - name: Run Reels Bot
-        env:
-          INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
-          INSTAGRAM_ACCOUNT_ID: ${{ secrets.INSTAGRAM_ACCOUNT_ID }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
-          PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
-          COVERR_API_KEY: ${{ secrets.COVERR_API_KEY }}
-        run: python reels.py
+        if "error" in res:
+            print(f"Coverr API Warning: {res}")
+            continue
+            
+        # Strictly enforce vertical aspect ratio using raw file dimensions
+        hits = res.get("hits", [])
+        vertical_hits = [h for h in hits if h.get("width", 1) < h.get("height", 0)]
+        
+        if vertical_hits:
+            chosen = random.choice(vertical_hits)
+            urls = chosen.get("urls", {})
+            video_url = urls.get("mp4_download") or urls.get("mp4")
+            if video_url:
+                return video_url, location
+
+    # Guaranteed vertical fallback if specific locations lack portrait footage
+    fallback_url = "https://api.coverr.co/videos?query=mediterranean+beach+vertical&urls=true"
+    f_res = requests.get(fallback_url, headers=headers).json()
+    f_hits = [h for h in f_res.get("hits", []) if h.get("width", 1) < h.get("height", 0)]
+    
+    if f_hits:
+        chosen = random.choice(f_hits)
+        video_url = chosen["urls"].get("mp4_download") or chosen["urls"].get("mp4")
+        if video_url:
+            return video_url, "Mediterranean Sea"
+
+    raise Exception("Could not find a vertical video on Coverr. Verify your COVERR_API_KEY is correct.")
+
+def generate_caption(location):
+    client = genai.Client(api_key=GEMINI_KEY)
+    prompt = f"""
+    Generate a minimalist Instagram Reel caption for the Mediterranean location: {location}.
+
+    CRITICAL INSTRUCTIONS:
+    Output EXACTLY this format and nothing else. 
+    1. Line 1: [Specific Island/City Name], [Country] ☀️ [Country Flag Emoji]
+    2. Line 2: Exactly ONE short, interesting sentence sharing a random fact about the location.
+    3. Line 3: A blank line.
+    4. Line 4: Exactly 3 to 4 hashtags.
+    DO NOT USE HYPHENS ("-") OR DASHES ANYWHERE.
+    """
+    
+    for attempt in range(4):
+        try:
+            response = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=prompt,
+            )
+            return response.text.strip().replace("-", " ").replace("  ", " ")
+        except Exception as e:
+            print(f"Gemini API attempt {attempt + 1}/4 failed: {e}")
+            if attempt < 3:
+                time.sleep(30)
+            else:
+                raise Exception("Gemini API failed after 4 attempts.") from e
+
+def wait_until_ready(container_id):
+    print("Waiting for Meta servers to process vertical video file...")
+    for _ in range(60):
+        url = f"{GRAPH}/{container_id}?fields=status_code&access_token={ACCESS_TOKEN}"
+        res = requests.get(url).json()
+        status = res.get("status_code")
+        
+        if status == "FINISHED":
+            return
+        if status in ("ERROR", "EXPIRED"):
+            raise Exception(f"Container {container_id} ended with status {status}: {res}")
+        
+        time.sleep(10)
+    raise Exception(f"Container {container_id} processing timed out")
+
+def post_reel(video_url, caption):
+    print("Creating Reels media container on Meta Graph API...")
+    container_url = f"{GRAPH}/{ACCOUNT_ID}/media"
+    payload = {
+        'media_type': 'REELS',
+        'video_url': video_url,
+        'caption': caption,
+        'access_token': ACCESS_TOKEN
+    }
+    
+    res = requests.post(container_url, data=payload).json()
+    creation_id = res.get('id')
+    if not creation_id:
+        raise Exception(f"Failed to create media container: {res}")
+
+    wait_until_ready(creation_id)
+
+    print("Publishing Reel to Instagram...")
+    publish_url = f"{GRAPH}/{ACCOUNT_ID}/media_publish"
+    publish_payload = {
+        'creation_id': creation_id,
+        'access_token': ACCESS_TOKEN
+    }
+    
+    pub_res = requests.post(publish_url, data=publish_payload).json()
+    if 'id' not in pub_res:
+        raise Exception(f"Failed to publish Reel: {pub_res}")
+    
+    return pub_res['id']
+
+def run():
+    print("Fetching strictly vertical (9:16) video from Coverr...")
+    video_url, location = get_vertical_video()
+    print(f"Selected 9:16 Video Stream: {video_url}")
+    
+    print(f"Generating caption for {location}...")
+    caption = generate_caption(location)
+    
+    reel_id = post_reel(video_url, caption)
+    print(f"Successfully published Reel ID: {reel_id}")
+
+if __name__ == "__main__":
+    run()
