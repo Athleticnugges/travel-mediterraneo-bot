@@ -18,41 +18,49 @@ PLACES = [
     "Dubrovnik", "Malta", "Cyprus"
 ]
 
+def extract_video_url(hit):
+    """Extract highest quality MP4 stream from Coverr payload."""
+    urls = hit.get("urls", {})
+    if isinstance(urls, dict):
+        return urls.get("mp4_download") or urls.get("mp4") or urls.get("hd") or urls.get("sd")
+    return None
+
 def get_vertical_video():
     headers = {"Authorization": f"Bearer {COVERR_KEY}"}
     
-    for _ in range(5):
+    # Try searching location-specific 9:16 vertical clips
+    for attempt in range(5):
         location = random.choice(PLACES)
-        url = f"https://api.coverr.co/videos?query={location}&urls=true"
-        res = requests.get(url, headers=headers).json()
+        url = f"https://api.coverr.co/videos?query={location.replace(' ', '+')}&aspect_ratio=9:16&urls=true"
+        res = requests.get(url, headers=headers)
         
-        if "error" in res:
-            print(f"Coverr API Warning: {res}")
+        print(f"Coverr API attempt {attempt+1} [{location}]: Status {res.status_code}")
+        if res.status_code != 200:
+            print(f"Coverr Error Response: {res.text}")
             continue
-            
-        # Strictly enforce vertical aspect ratio using raw file dimensions
-        hits = res.get("hits", [])
-        vertical_hits = [h for h in hits if h.get("width", 1) < h.get("height", 0)]
-        
-        if vertical_hits:
-            chosen = random.choice(vertical_hits)
-            urls = chosen.get("urls", {})
-            video_url = urls.get("mp4_download") or urls.get("mp4")
+
+        data = res.json()
+        hits = data.get("hits", [])
+        if hits:
+            chosen = random.choice(hits)
+            video_url = extract_video_url(chosen)
             if video_url:
                 return video_url, location
 
-    # Guaranteed vertical fallback if specific locations lack portrait footage
-    fallback_url = "https://api.coverr.co/videos?query=mediterranean+beach+vertical&urls=true"
-    f_res = requests.get(fallback_url, headers=headers).json()
-    f_hits = [h for h in f_res.get("hits", []) if h.get("width", 1) < h.get("height", 0)]
-    
-    if f_hits:
-        chosen = random.choice(f_hits)
-        video_url = chosen["urls"].get("mp4_download") or chosen["urls"].get("mp4")
-        if video_url:
-            return video_url, "Mediterranean Sea"
+    # Fallback to broader Mediterranean search with 9:16 aspect ratio
+    fallback_queries = ["mediterranean+sea", "beach", "coast"]
+    for q in fallback_queries:
+        fallback_url = f"https://api.coverr.co/videos?query={q}&aspect_ratio=9:16&urls=true"
+        f_res = requests.get(fallback_url, headers=headers)
+        if f_res.status_code == 200:
+            f_hits = f_res.json().get("hits", [])
+            if f_hits:
+                chosen = random.choice(f_hits)
+                video_url = extract_video_url(chosen)
+                if video_url:
+                    return video_url, "Mediterranean Coast"
 
-    raise Exception("Could not find a vertical video on Coverr. Verify your COVERR_API_KEY is correct.")
+    raise Exception("Could not retrieve a 9:16 vertical video stream from Coverr. Check API key status.")
 
 def generate_caption(location):
     client = genai.Client(api_key=GEMINI_KEY)
