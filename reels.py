@@ -19,33 +19,37 @@ PLACES = [
 ]
 
 def get_pixabay_video():
-    for _ in range(3):
+    # Increased attempts to guarantee we find a strictly vertical video
+    for _ in range(10):
         location = random.choice(PLACES)
         url = "https://pixabay.com/api/videos/"
         params = {
             "key": PIXABAY_KEY,
             "q": f"{location} sunny beach",
             "video_type": "film",
-            "per_page": 20
+            "per_page": 50  # Increased search pool
         }
         
         res = requests.get(url, params=params).json()
         hits = res.get("hits", [])
         
-        if hits:
-            vertical_hits = [
-                h for h in hits 
-                if h["videos"].get("medium", {}).get("height", 0) > h["videos"].get("medium", {}).get("width", 0)
-            ]
-            chosen = random.choice(vertical_hits) if vertical_hits else random.choice(hits)
-            
+        # STRICT FILTER: Height must be greater than width. No fallbacks to horizontal.
+        vertical_hits = [
+            h for h in hits 
+            if h["videos"].get("medium", {}).get("height", 0) > h["videos"].get("medium", {}).get("width", 0)
+        ]
+        
+        if vertical_hits:
+            chosen = random.choice(vertical_hits)
             v_data = chosen["videos"]
-            video_url = v_data.get("medium", {}).get("url") or v_data.get("small", {}).get("url")
             
-            if video_url:
-                return video_url, location
+            # Prioritize the absolute highest resolution stream (4K 'large' first, then 1080p 'medium')
+            for size in ["large", "medium", "small"]:
+                stream = v_data.get(size, {})
+                if stream.get("url") and stream.get("height", 0) > stream.get("width", 0):
+                    return stream["url"], location
 
-    raise Exception("Could not find a valid video on Pixabay.")
+    raise Exception("Could not find a strictly vertical, high-quality video on Pixabay after 10 attempts.")
 
 def generate_caption(location):
     client = genai.Client(api_key=GEMINI_KEY)
@@ -61,7 +65,6 @@ def generate_caption(location):
     DO NOT USE HYPHENS ("-") OR DASHES ANYWHERE.
     """
     
-    # Retry loop to handle temporary 503 service spikes automatically
     for attempt in range(4):
         try:
             response = client.models.generate_content(
@@ -78,8 +81,8 @@ def generate_caption(location):
                 raise Exception("Gemini API failed after 4 attempts due to server traffic.") from e
 
 def wait_until_ready(container_id):
-    print("Waiting for Meta servers to process the video container...")
-    for _ in range(40):
+    print("Waiting for Meta servers to process the high-quality video container...")
+    for _ in range(60): # Increased wait time for larger 4K video file processing
         url = f"{GRAPH}/{container_id}?fields=status_code&access_token={ACCESS_TOKEN}"
         res = requests.get(url).json()
         status = res.get("status_code")
@@ -123,8 +126,9 @@ def post_reel(video_url, caption):
     return pub_res['id']
 
 def run():
-    print("Fetching Mediterranean video from Pixabay...")
+    print("Fetching strictly vertical, high-quality Mediterranean video from Pixabay...")
     video_url, location = get_pixabay_video()
+    print(f"Selected Video Stream: {video_url}")
     
     print(f"Generating caption for {location}...")
     caption = generate_caption(location)
