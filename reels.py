@@ -91,8 +91,8 @@ def get_mediterranean_video_url(location, history):
 
     return None
 
-# --- 4. DOWNLOAD & PROCESS VIDEO (FFMPEG WITH TEXT + SILENT AUDIO) ---
-def process_video(video_url, location_name):
+# --- 4. DOWNLOAD & PROCESS VIDEO (CLEAN 9:16 CROP + SILENT AUDIO) ---
+def process_video(video_url):
     raw_path = "raw_input.mp4"
     final_path = "final_reel.mp4"
     
@@ -103,19 +103,9 @@ def process_video(video_url, location_name):
             for chunk in r.iter_content(chunk_size=8192):
                 f.write(chunk)
                 
-    print("🎬 Processing video (9:16 crop, text hook, silent audio)...")
+    print("🎬 Processing video (9:16 clean crop, silent audio)...")
     
-    short_loc = " ".join(location_name.split(" ")[:2])
-    hook_text = f"POV You escaped to {short_loc}"
-    
-    vf_string = (
-        "scale=1080:1920:force_original_aspect_ratio=increase,"
-        "crop=1080:1920,setsar=1,"
-        f"drawtext=text='{hook_text}':fontcolor=white:fontsize=56:"
-        "box=1:boxcolor=black@0.4:boxborderw=15:"
-        "x=(w-text_w)/2:y=(h-text_h)/2-200:"
-        "enable='between(t,0,3)'"
-    )
+    vf_string = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1"
     
     cmd = [
         "ffmpeg", "-y", "-i", raw_path,
@@ -239,12 +229,11 @@ def run():
     if not video_url:
         raise Exception("❌ Failed to find a unique, unposted video after 5 attempts.")
 
-    final_video_path = process_video(video_url, target_location)
+    final_video_path = process_video(video_url)
     caption = generate_caption(target_location)
     
     post_reel_resumable(final_video_path, caption)
     
-    # Save the posted URL to history only after a successful post
     history.append(video_url)
     save_history(history)
 
