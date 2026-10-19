@@ -32,4 +32,4 @@ jobs:
           COVERR_API_KEY: ${{ secrets.COVERR_API_KEY }}
           PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
-        run: python reels.py
+        run: python -u reels.py

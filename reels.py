@@ -193,6 +193,58 @@ def post_reel(video_url, caption):
     
     return pub_res['id']
 
+def post_reel_resumable(video_path, caption):
+    """Uploads the video bytes straight to Instagram, so no public file host is needed."""
+    import os, time, requests
+    graph = "https://graph.facebook.com/v26.0"
+    token = os.environ["INSTAGRAM_ACCESS_TOKEN"]
+    account = os.environ["INSTAGRAM_ACCOUNT_ID"]
+
+    # 1. create a container that waits for an upload instead of fetching a URL
+    res = requests.post(f"{graph}/{account}/media", data={
+        "media_type": "REELS",
+        "upload_type": "resumable",
+        "caption": caption,
+        "share_to_feed": "true",
+        "access_token": token,
+    }, timeout=60).json()
+    container_id = res.get("id")
+    if not container_id:
+        raise Exception(f"Container creation failed: {res}")
+    upload_url = res.get("uri") or f"https://rupload.facebook.com/ig-api-upload/v26.0/{container_id}"
+
+    # 2. send the file bytes directly to Meta
+    size = os.path.getsize(video_path)
+    with open(video_path, "rb") as f:
+        up = requests.post(upload_url, headers={
+            "Authorization": f"OAuth {token}",
+            "offset": "0",
+            "file_size": str(size),
+        }, data=f, timeout=300)
+    print("Upload response:", up.status_code, up.text[:300])
+    if up.status_code != 200:
+        raise Exception(f"Upload failed: {up.status_code} {up.text[:300]}")
+
+    # 3. wait until Instagram finishes processing
+    for _ in range(60):
+        st = requests.get(f"{graph}/{container_id}", params={
+            "fields": "status_code,status", "access_token": token}, timeout=30).json()
+        if st.get("status_code") == "FINISHED":
+            break
+        if st.get("status_code") in ("ERROR", "EXPIRED"):
+            raise Exception(f"Reel processing failed: {st}")
+        time.sleep(5)
+    else:
+        raise Exception("Reel processing timed out")
+
+    # 4. publish
+    out = requests.post(f"{graph}/{account}/media_publish", data={
+        "creation_id": container_id, "access_token": token}, timeout=60).json()
+    if "id" not in out:
+        raise Exception(f"Publish failed: {out}")
+    return out["id"]
+
+
 def run():
     print("Fetching raw video candidate...")
     raw_url, location = fetch_candidate_video()
@@ -203,12 +255,11 @@ def run():
     print("Enforcing physical 9:16 aspect ratio, AAC audio stream, and faststart metadata via FFmpeg...")
     final_file = process_to_vertical("raw_input.mp4")
     
-    public_video_url = upload_temp_host(final_file)
     
     print(f"Generating caption for {location}...")
     caption = generate_caption(location)
     
-    reel_id = post_reel(public_video_url, caption)
+    reel_id = post_reel_resumable(final_file, caption)
     print(f"Successfully published Reel ID: {reel_id}")
 
 if __name__ == "__main__":
